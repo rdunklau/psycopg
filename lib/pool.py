@@ -129,8 +129,10 @@ class AbstractConnectionPool(object):
                 if status == _ext.TRANSACTION_STATUS_UNKNOWN:
                     # server connection lost
                     conn.close()
-                elif status != _ext.TRANSACTION_STATUS_IDLE:
+                elif status != _ext.TRANSACTION_STATUS_IDLE \
+                and not isinstance(self, PersistentConnectionPool):
                     # connection in error or in transaction
+                    # if the pool is used by zope, open transactions are normal
                     conn.rollback()
                     self._pool.append(conn)
                 else:
