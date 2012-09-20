@@ -52,7 +52,7 @@ class DB(TM, dbi_db.DB):
         # connection, so we avoid to (re)initialize it risking errors.
         conn = pool.getconn(self.dsn)
         if init:
-            conn.set_isolation_level(int(self.tilevel))
+            conn.set_session(isolation_level=int(self.tilevel))
             conn.set_client_encoding(self.encoding)
             for tc in self.typecasts:
                 register_type(tc, conn)
