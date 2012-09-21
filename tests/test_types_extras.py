@@ -567,7 +567,8 @@ class AdaptTypeTestCase(unittest.TestCase):
                 self.anint = anint
                 self.astring = astring
 
-        psycopg2.extras.register_composite("type_is", self.conn, ctor=TypeIs)
+        psycopg2.extras.register_composite("type_is", self.conn, ctor=TypeIs,
+                                           register_adapter=True)
         curs = self.conn.cursor()
         r = (2, "hello")
         curs.execute("select %s::type_is;", (r,))
@@ -581,6 +582,22 @@ class AdaptTypeTestCase(unittest.TestCase):
         assert isinstance(v, TypeIs)
         assert v.anint == 2
         assert v.astring == "hello"
+
+    @skip_if_no_composite
+    def test_cast_composite_dict(self):
+        self._create_type("type_is",
+                          [("anint", "integer"), ("astring", "text")])
+        psycopg2.extras.register_composite("type_is", self.conn, ctor=dict)
+        r = (2, 'hello')
+        curs = self.conn.cursor()
+        curs.execute("select %s::type_is;", (r,))
+        v = curs.fetchone()[0]
+        assert isinstance(v, dict)
+        assert v['anint'] == 2
+        assert v['astring'] == "hello"
+
+
+
 
     @skip_if_no_composite
     def test_cast_nested(self):

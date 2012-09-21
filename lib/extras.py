@@ -42,8 +42,6 @@ from psycopg2.extensions import cursor as _cursor
 from psycopg2.extensions import connection as _connection
 from psycopg2.extensions import adapt as _A
 from psycopg2.extensions import b
-from psycopg2.extensions import SQL_IN
-from psycopg2.extensions import register_adapter
 
 
 class DictCursorBase(_cursor):
@@ -953,7 +951,8 @@ ORDER BY attnum;
         return CompositeCaster(tname, type_oid, type_attrs,
                                array_oid=array_oid, ctor=ctor)
 
-def register_composite(name, conn_or_curs, globally=False, ctor=None):
+def register_composite(name, conn_or_curs, globally=False, ctor=None,
+                       register_adapter=False):
     """Register a typecaster to convert a composite type into a tuple, or a
     user-provided type.
 
@@ -967,6 +966,8 @@ def register_composite(name, conn_or_curs, globally=False, ctor=None):
     :param ctor: if not None, instantiate this type when converting the
         composite type, and register an adapter as well for this type. If None
         (default), return a named-tuple for the composite type.
+    :param register_adapter: if true, and ctor is not None, register an adapter
+        for the ctor type. (default false).
     :return: the registered `CompositeCaster` instance responsible for the
         conversion
 
@@ -976,15 +977,15 @@ def register_composite(name, conn_or_curs, globally=False, ctor=None):
     """
     caster = CompositeCaster._from_db(name, conn_or_curs, ctor=ctor)
     _ext.register_type(caster.typecaster, not globally and conn_or_curs or None)
-    if ctor is not None:
+    if ctor is not None and register_adapter:
         # Register an adapter as well
-        class CtorAdapter(SQL_IN):
+        class CtorAdapter(_ext.SQL_IN):
 
             def __init__(self, instance):
                 super(CtorAdapter, self).__init__((getattr(instance, key) for
                                                    key in caster.attnames))
         CtorAdapter.__name__ = ctor.__name__ + 'Adapter'
-        register_adapter(ctor, CtorAdapter)
+        _ext.register_adapter(ctor, CtorAdapter)
 
     if caster.array_typecaster is not None:
         _ext.register_type(caster.array_typecaster, not globally and
