@@ -557,6 +557,32 @@ class AdaptTypeTestCase(unittest.TestCase):
             self.assertEqual(v.adate, date(2011,1,2))
 
     @skip_if_no_composite
+    def test_cast_composite_ctor(self):
+        self._create_type("type_is",
+                          [("anint", "integer"), ("astring", "text")])
+
+        class TypeIs(object):
+
+            def __init__(self, anint=None, astring=None):
+                self.anint = anint
+                self.astring = astring
+
+        psycopg2.extras.register_composite("type_is", self.conn, ctor=TypeIs)
+        curs = self.conn.cursor()
+        r = (2, "hello")
+        curs.execute("select %s::type_is;", (r,))
+        v = curs.fetchone()[0]
+        assert isinstance(v, TypeIs)
+        assert v.anint == 2
+        assert v.astring == "hello"
+        r = TypeIs(anint=2, astring="hello")
+        curs.execute("select %s::type_is;", (r,))
+        v = curs.fetchone()[0]
+        assert isinstance(v, TypeIs)
+        assert v.anint == 2
+        assert v.astring == "hello"
+
+    @skip_if_no_composite
     def test_cast_nested(self):
         self._create_type("type_is",
             [("anint", "integer"), ("astring", "text")])

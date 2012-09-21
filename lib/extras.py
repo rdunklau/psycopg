@@ -42,6 +42,8 @@ from psycopg2.extensions import cursor as _cursor
 from psycopg2.extensions import connection as _connection
 from psycopg2.extensions import adapt as _A
 from psycopg2.extensions import b
+from psycopg2.extensions import SQL_IN
+from psycopg2.extensions import register_adapter
 
 
 class DictCursorBase(_cursor):
@@ -816,7 +818,9 @@ class CompositeCaster(object):
 
     .. attribute:: type
 
-        The type of the Python objects returned. If :py:func:`collections.namedtuple()`
+        The type of the Python objects returned. If a ctor argument is provided,
+        then this type will be used at instantiation. If the ctor argument is
+        None (default) and :py:func:`collections.namedtuple()`
         is available, it is a named tuple with attributes equal to the type
         components. Otherwise it is just the `!tuple` object.
 
@@ -829,14 +833,19 @@ class CompositeCaster(object):
         List of component type oids of the type to be casted.
 
     """
-    def __init__(self, name, oid, attrs, array_oid=None):
+    def __init__(self, name, oid, attrs, array_oid=None, ctor=None):
         self.name = name
         self.oid = oid
         self.array_oid = array_oid
 
         self.attnames = [ a[0] for a in attrs ]
         self.atttypes = [ a[1] for a in attrs ]
-        self._create_type(name, self.attnames)
+        # Defaults to named tuple
+        if ctor is None:
+            self._create_type(name, self.attnames)
+        else:
+            self._ctor = ctor
+            self.type = ctor
         self.typecaster = _ext.new_type((oid,), name, self.parse)
         if array_oid:
             self.array_typecaster = _ext.new_array_type(
@@ -853,9 +862,10 @@ class CompositeCaster(object):
             raise psycopg2.DataError(
                 "expecting %d components for the type %s, %d found instead" %
                 (len(self.atttypes), self.name, len(tokens)))
-
-        return self._ctor(curs.cast(oid, token)
-            for oid, token in zip(self.atttypes, tokens))
+        kwargs = dict((key, curs.cast(oid, token))
+                      for key, oid, token in
+                      zip(self.attnames, self.atttypes, tokens))
+        return self._ctor(**kwargs)
 
     _re_tokenize = regex.compile(r"""
   \(? ([,)])                        # an empty token, representing NULL
@@ -888,10 +898,13 @@ class CompositeCaster(object):
             self._ctor = self.type
         else:
             self.type = namedtuple(name, attnames)
-            self._ctor = self.type._make
+
+            def tuple_ctor(**kwargs):
+                return self.type(*[kwargs.get(key) for key in self.attnames])
+            self._ctor = tuple_ctor
 
     @classmethod
-    def _from_db(self, name, conn_or_curs):
+    def _from_db(self, name, conn_or_curs, ctor=None):
         """Return a `CompositeCaster` instance for the type *name*.
 
         Raise `ProgrammingError` if the type is not found.
@@ -938,10 +951,11 @@ ORDER BY attnum;
         type_attrs = [ (r[2], r[3]) for r in recs ]
 
         return CompositeCaster(tname, type_oid, type_attrs,
-            array_oid=array_oid)
+                               array_oid=array_oid, ctor=ctor)
 
-def register_composite(name, conn_or_curs, globally=False):
-    """Register a typecaster to convert a composite type into a tuple.
+def register_composite(name, conn_or_curs, globally=False, ctor=None):
+    """Register a typecaster to convert a composite type into a tuple, or a
+    user-provided type.
 
     :param name: the name of a PostgreSQL composite type, e.g. created using
         the |CREATE TYPE|_ command
@@ -950,6 +964,9 @@ def register_composite(name, conn_or_curs, globally=False):
         object, unless *globally* is set to `!True`
     :param globally: if `!False` (default) register the typecaster only on
         *conn_or_curs*, otherwise register it globally
+    :param ctor: if not None, instantiate this type when converting the
+        composite type, and register an adapter as well for this type. If None
+        (default), return a named-tuple for the composite type.
     :return: the registered `CompositeCaster` instance responsible for the
         conversion
 
@@ -957,11 +974,21 @@ def register_composite(name, conn_or_curs, globally=False):
         added support for array of composite types
 
     """
-    caster = CompositeCaster._from_db(name, conn_or_curs)
+    caster = CompositeCaster._from_db(name, conn_or_curs, ctor=ctor)
     _ext.register_type(caster.typecaster, not globally and conn_or_curs or None)
+    if ctor is not None:
+        # Register an adapter as well
+        class CtorAdapter(SQL_IN):
+
+            def __init__(self, instance):
+                super(CtorAdapter, self).__init__((getattr(instance, key) for
+                                                   key in caster.attnames))
+        CtorAdapter.__name__ = ctor.__name__ + 'Adapter'
+        register_adapter(ctor, CtorAdapter)
 
     if caster.array_typecaster is not None:
-        _ext.register_type(caster.array_typecaster, not globally and conn_or_curs or None)
+        _ext.register_type(caster.array_typecaster, not globally and
+                           conn_or_curs or None)
 
     return caster
 
